@@ -1061,15 +1061,11 @@ namespace PTKidsBITRobot {
         }
 
         if (ADC_Version == 1) {
-            control.waitMicros(2000)
             pins.i2cWriteNumber(0x48, ADCRead, NumberFormat.UInt8LE, false)
-            control.waitMicros(2000)
             return ADCRead = pins.i2cReadNumber(0x48, NumberFormat.UInt16BE, false)
         }
         else if (ADC_Version == 2) {
-            control.waitMicros(2000)
             pins.i2cWriteNumber(0x49, ADCRead, NumberFormat.UInt8LE, false)
-            control.waitMicros(2000)
             return ADCRead = pins.i2cReadNumber(0x49, NumberFormat.UInt8LE, false)
         }
         else {
@@ -1158,20 +1154,33 @@ namespace PTKidsBITRobot {
     //% break_delay.shadow="timePicker"
     //% time.defl=200
     export function TurnLINE(turn: Turn_Line, speed: number, sensor: Turn_ADC, time: number) {
+        let ADC_PIN = [
+            ADC_Read.ADC0,
+            ADC_Read.ADC1,
+            ADC_Read.ADC2,
+            ADC_Read.ADC3,
+            ADC_Read.ADC4,
+            ADC_Read.ADC5
+        ]
         let error = 0
+        let sensor_map_value = 0
         let motor_speed = 0
         let motor_slow = 20
+        let on_line = 0
         let timer = control.millis()
-        let _position = 0
-
-        if (sensor == Turn_ADC.ADC0) _position = 0
-        else if (sensor == Turn_ADC.ADC1) _position = 3000
-        else if (sensor == Turn_ADC.ADC2) _position = 2400
-        else if (sensor == Turn_ADC.ADC3) _position = 1800
-        else if (sensor == Turn_ADC.ADC4) _position = 1200
-        else if (sensor == Turn_ADC.ADC5) _position = 600
 
         while (1) {
+            on_line = 0
+            for (let i = 0; i < Sensor_PIN.length; i++) {
+                if ((pins.map(ADCRead(ADC_PIN[Sensor_PIN[i]]), Color_Line[i], Color_Background[i], 1000, 0)) >= 500) {
+                    on_line += 1;
+                }
+            }
+
+            if (on_line == 0) {
+                break
+            }
+
             error = timer - (control.millis() - time)
             motor_speed = error
 
@@ -1183,16 +1192,22 @@ namespace PTKidsBITRobot {
             }
 
             if (turn == Turn_Line.Left) {
-                if (GETPosition() <= 500) break
                 motorGo(-motor_speed, motor_speed)
             }
             else if (turn == Turn_Line.Right) {
-                if (GETPosition() >= 2500) break
                 motorGo(motor_speed, -motor_speed)
             }
         }
+        
         while (1) {
-            if (GETPosition() >= _position - 300 && GETPosition() <= _position + 300) {
+            if (sensor == Turn_ADC.ADC0) sensor_map_value = pins.map(ADCRead(ADC_Read.ADC0), Color_Line[0], Color_Background[0], 1000, 0)
+            else if (sensor == Turn_ADC.ADC1) sensor_map_value = pins.map(ADCRead(ADC_Read.ADC1), Color_Line[1], Color_Background[1], 1000, 0)
+            else if (sensor == Turn_ADC.ADC2) sensor_map_value = pins.map(ADCRead(ADC_Read.ADC2), Color_Line[2], Color_Background[2], 1000, 0)
+            else if (sensor == Turn_ADC.ADC3) sensor_map_value = pins.map(ADCRead(ADC_Read.ADC3), Color_Line[3], Color_Background[3], 1000, 0)
+            else if (sensor == Turn_ADC.ADC4) sensor_map_value = pins.map(ADCRead(ADC_Read.ADC4), Color_Line[4], Color_Background[4], 1000, 0)
+            else if (sensor == Turn_ADC.ADC5) sensor_map_value = pins.map(ADCRead(ADC_Read.ADC5), Color_Line[5], Color_Background[5], 1000, 0)
+
+            if (sensor_map_value >= 500) {
                 motorStop()
                 break
             }
@@ -1345,7 +1360,7 @@ namespace PTKidsBITRobot {
     //% min_speed.min=0 min_speed.max=100
     //% max_speed.min=0 max_speed.max=100
     export function ForwardLINECount(find: Find_Line, count: number, min_speed: number, max_speed: number, kp: number, kd: number) {
-        let on_line_setpoint = 800
+        let on_line_setpoint = 500
         let _count = 0
         while (1) {
             let found = 0
@@ -1379,6 +1394,7 @@ namespace PTKidsBITRobot {
                                 motorGo(min_speed, min_speed)
                             }
                             else {
+                                basic.pause(100)
                                 break
                             }
                         }
@@ -1401,6 +1417,7 @@ namespace PTKidsBITRobot {
                                 motorGo(min_speed, min_speed)
                             }
                             else {
+                                basic.pause(100)
                                 break
                             }
                         }
@@ -1423,6 +1440,7 @@ namespace PTKidsBITRobot {
                                 motorGo(min_speed, min_speed)
                             }
                             else {
+                                basic.pause(100)
                                 break
                             }
                         }
