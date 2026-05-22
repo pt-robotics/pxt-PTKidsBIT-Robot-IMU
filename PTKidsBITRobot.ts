@@ -49,6 +49,19 @@ let Servo_12_Degree = 0
 let distance = 0
 let timer = 0
 
+let BNO085_ADDR = 0x4A
+let initIMU = false
+let angle_offset: number[] = [0, 0, 0]
+let imu_roll = 0
+let imu_pitch = 0
+let imu_yaw = 0
+let imu_last_update = 0
+let imu_last_seq = -1
+let shtp_seq_control = 0
+
+let imu_ready = false
+let imu_running = false
+
 enum Motor_Write {
     //% block="Left"
     Motor_Left,
@@ -195,6 +208,15 @@ enum LED_Color {
     Blue = 0x0000FF,
     //% block=Black
     Black = 0x000000
+}
+
+enum Angle {
+    //% block="Yaw"
+    Yaw,
+    //% block="Pitch"
+    Pitch,
+    //% block="Roll"
+    Roll
 }
 
 //% color="#51cb57" icon="\u2B99"
@@ -755,6 +777,125 @@ namespace PTKidsBITRobot {
         Shortest
     }
 
+    function norm360(v: number): number {
+        while (v < 0) v += 360
+        while (v >= 360) v -= 360
+        return v
+    }
+
+    function i16(buf: Buffer, i: number): number {
+        let v = buf[i] | (buf[i + 1] << 8)
+        if (v > 32767) v -= 65536
+        return v
+    }
+
+    function writeSHTP(channel: number, payload: Buffer): void {
+        let len = payload.length + 4
+        let buf = pins.createBuffer(len)
+
+        buf[0] = len & 0xFF
+        buf[1] = (len >> 8) & 0xFF
+        buf[2] = channel
+        buf[3] = shtp_seq_control
+
+        for (let i = 0; i < payload.length; i++) {
+            buf[i + 4] = payload[i]
+        }
+
+        shtp_seq_control = (shtp_seq_control + 1) & 0xFF
+
+        pins.i2cWriteBuffer(BNO085_ADDR, buf, false)
+    }
+
+    function initBNO085() {
+        basic.pause(2500)
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+            for (let i = 0; i < 5; i++) {
+                pins.i2cReadBuffer(BNO085_ADDR, 32, false)
+                basic.pause(5)
+            }
+
+            let p = pins.createBuffer(17)
+
+            p[0] = 0xFD
+            p[1] = 0x08   // Game Rotation Vector
+
+            p[5] = 0x20
+            p[6] = 0x4E
+            p[7] = 0x00
+            p[8] = 0x00
+
+            writeSHTP(2, p)
+            basic.pause(500)
+
+            for (let j = 0; j < 20; j++) {
+                readBNO085_RPY()
+                if (imu_ready) {
+                    return
+                }
+                basic.pause(50)
+            }
+        }
+    }
+
+    function readBNO085_RPY(): void {
+        let found = false
+
+        let best_qi = 0
+        let best_qj = 0
+        let best_qk = 0
+        let best_qr = 1
+
+        for (let n = 0; n < 3; n++) {
+            let buf = pins.i2cReadBuffer(BNO085_ADDR, 32, false)
+
+            for (let idx = 4; idx < 16; idx++) {
+                let qi = i16(buf, idx) / 16384
+                let qj = i16(buf, idx + 2) / 16384
+                let qk = i16(buf, idx + 4) / 16384
+                let qr = i16(buf, idx + 6) / 16384
+
+                let mag = qi * qi + qj * qj + qk * qk + qr * qr
+
+                if (mag >= 0.85 && mag <= 1.15) {
+                    best_qi = qi
+                    best_qj = qj
+                    best_qk = qk
+                    best_qr = qr
+                    found = true
+                }
+            }
+        }
+
+        if (found == false) {
+            return
+        }
+
+        let r = Math.atan2(
+            2 * (best_qr * best_qi + best_qj * best_qk),
+            1 - 2 * (best_qi * best_qi + best_qj * best_qj)
+        ) * 180 / Math.PI
+
+        let t2 = 2 * (best_qr * best_qj - best_qk * best_qi)
+        if (t2 > 1) t2 = 1
+        if (t2 < -1) t2 = -1
+
+        let p = Math.asin(t2) * 180 / Math.PI
+
+        let y = Math.atan2(
+            2 * (best_qr * best_qk + best_qi * best_qj),
+            1 - 2 * (best_qj * best_qj + best_qk * best_qk)
+        ) * 180 / Math.PI
+
+        imu_roll = norm360(y)
+        imu_pitch = norm360(p)
+        imu_yaw = norm360(-r)
+
+        imu_ready = true
+        imu_last_update = control.millis()
+    }
+
     function readAdcAll(): void {
         let ADC_PIN = [
             ADC_Read.ADC0,
@@ -845,6 +986,81 @@ namespace PTKidsBITRobot {
         pins.analogWritePin(AnalogPin.P14, 0)
         pins.digitalWritePin(DigitalPin.P15, 1)
         pins.analogWritePin(AnalogPin.P16, 0)
+    }
+
+    //% group="Motor Control"
+    /**
+     * Spin the Robot to Degrees.
+     */
+    //% block="Spin Degree %degrees"
+    //% degrees.min=-180 degrees.max=180
+    //% degrees.defl=90
+    export function spinDegrees(degrees: number): void {
+
+        if (initIMU == false) {
+            initBNO085()
+            initIMU = true
+        }
+
+        let min_speed = 8
+        let max_speed = 70
+
+        let kp = 1.5
+        let kd = 1.0
+
+        let stableStart = 0
+        let stableTime = 50
+        let targetError = 1.0
+
+        let previous_error = 0
+
+        while (true) {
+
+            let current_yaw = anglesRead(Angle.Yaw)
+
+            let error_yaw = degrees - current_yaw
+
+            if (error_yaw > 180) {
+                error_yaw -= 360
+            }
+            else if (error_yaw < -180) {
+                error_yaw += 360
+            }
+
+            let derivative = error_yaw - previous_error
+
+            let pd_value = error_yaw * kp + derivative * kd
+
+            if (pd_value > max_speed) pd_value = max_speed
+            if (pd_value < -max_speed) pd_value = -max_speed
+
+            if (Math.abs(error_yaw) <= targetError) {
+                motorStop()
+
+                if (stableStart == 0) {
+                    stableStart = control.millis()
+                }
+
+                if (control.millis() - stableStart >= stableTime) {
+                    break
+                }
+            }
+            else {
+                stableStart = 0
+
+                if (Math.abs(pd_value) < min_speed) {
+                    if (pd_value > 0) pd_value = min_speed
+                    else pd_value = -min_speed
+                }
+
+                motorGo(pd_value, -pd_value)
+            }
+
+            previous_error = error_yaw
+            basic.pause(10)
+        }
+
+        motorStop()
     }
 
     // //% group="Motor Control"
@@ -1039,6 +1255,60 @@ namespace PTKidsBITRobot {
             else {
                 setServoPCA(0, degree)
             }
+        }
+    }
+
+    //% group="Sensor and ADC"
+    /**
+     * Read Angles from IMU
+     */
+    //% block="Read Angle %Angle"
+    //% offset.min=-180 offset.max=180
+    export function anglesRead(anglesRead: Angle): number {
+        if (initIMU == false) {
+            initBNO085()
+            initIMU = true
+        }
+
+        readBNO085_RPY()
+
+        if (anglesRead == Angle.Roll) {
+            return norm360(imu_roll - angle_offset[0])
+        }
+        else if (anglesRead == Angle.Pitch) {
+            return norm360(imu_pitch - angle_offset[1])
+        }
+        else if (anglesRead == Angle.Yaw) {
+            return norm360(imu_yaw - angle_offset[2])
+        }
+
+        return 0
+    }
+
+    //% group="Sensor and ADC"
+    /**
+     * Set IMU offset to 0
+     */
+    //% block="Set Angle Offset %Angle"
+    export function setAngleOffset(setAngles: Angle): void {
+        if (initIMU == false) {
+            initBNO085()
+            initIMU = true
+        }
+
+        for (let i = 0; i < 10; i++) {
+            readBNO085_RPY()
+            basic.pause(20)
+        }
+
+        if (setAngles == Angle.Roll) {
+            angle_offset[0] = imu_roll
+        }
+        else if (setAngles == Angle.Pitch) {
+            angle_offset[1] = imu_pitch
+        }
+        else if (setAngles == Angle.Yaw) {
+            angle_offset[2] = imu_yaw
         }
     }
 
