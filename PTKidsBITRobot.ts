@@ -990,6 +990,68 @@ namespace PTKidsBITRobot {
 
     //% group="Motor Control"
     /**
+     * Forward or Backward with degrees.
+     */
+    //% block="Direction %Forward_Direction|Time %time|Go Degree %degrees|Min Speed %min_speed"
+    //% degrees.min=-180 degrees.max=180
+    //% min_speed.min=0 min_speed.max=100
+    //% time.shadow="timePicker"
+    //% time.defl=500
+    //% min_speed.defl=30
+    export function goWithDegreesTime(
+        direction: Forward_Direction,
+        time: number,
+        degrees: number,
+        min_speed: number
+    ) {
+        const max_speed = 100
+        const kp = 2
+        const kd = 3
+
+        let timer = control.millis()
+        previous_error = 0
+
+        while (control.millis() - timer < time) {
+            error = degrees - anglesRead(Angle.Yaw)
+
+            if (error > 180) {
+                error -= 360
+            } else if (error < -180) {
+                error += 360
+            }
+
+            P = error
+            D = error - previous_error
+            PD_Value = (kp * P) + (kd * D)
+            previous_error = error
+
+            left_motor_speed = min_speed + PD_Value
+            right_motor_speed = min_speed - PD_Value
+
+            if (left_motor_speed > max_speed) {
+                left_motor_speed = max_speed
+            } else if (left_motor_speed < -max_speed) {
+                left_motor_speed = -max_speed
+            }
+
+            if (right_motor_speed > max_speed) {
+                right_motor_speed = max_speed
+            } else if (right_motor_speed < -max_speed) {
+                right_motor_speed = -max_speed
+            }
+
+            if (direction == Forward_Direction.Forward) {
+                motorGo(left_motor_speed, right_motor_speed)
+            } else {
+                motorGo(-right_motor_speed, -left_motor_speed)
+            }
+        }
+
+        motorStop()
+    }
+
+    //% group="Motor Control"
+    /**
      * Spin the Robot to Degrees.
      */
     //% block="Spin Degree %degrees"
@@ -1009,8 +1071,8 @@ namespace PTKidsBITRobot {
         let kd = 1.0
 
         let stableStart = 0
-        let stableTime = 50
-        let targetError = 1.0
+        let stableTime = 100
+        let targetError = 0.8
 
         let previous_error = 0
 
