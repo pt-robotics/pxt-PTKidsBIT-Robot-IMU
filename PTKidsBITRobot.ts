@@ -58,9 +58,9 @@ let imu_yaw = 0
 let imu_last_update = 0
 let imu_last_seq = -1
 let shtp_seq_control = 0
-
 let imu_ready = false
 let imu_running = false
+let current_degree = 0
 
 enum Motor_Write {
     //% block="Left"
@@ -990,15 +990,47 @@ namespace PTKidsBITRobot {
 
     //% group="Motor Control"
     /**
-     * Forward or Backward with degrees.
+     * Forward or Backward with Relative Degrees.
      */
-    //% block="Direction %Forward_Direction|Time %time|Go Degree %degrees|Min Speed %min_speed"
+    //% block="Direction %Forward_Direction|Time %time|REL Degree %degrees|Min Speed\n %min_speed"
     //% degrees.min=-180 degrees.max=180
     //% min_speed.min=0 min_speed.max=100
     //% time.shadow="timePicker"
     //% time.defl=500
     //% min_speed.defl=30
-    export function goWithDegreesTime(
+    export function goWithDegreesTimeREL(
+        direction: Forward_Direction,
+        time: number,
+        degrees: number,
+        min_speed: number
+    ) {
+        current_degree += degrees
+
+        if (current_degree > 180) {
+            current_degree -= 360
+        } else if (current_degree < -180) {
+            current_degree += 360
+        }
+
+        goWithDegreesTimeABS(
+            direction,
+            time,
+            current_degree,
+            min_speed
+        )
+    }
+
+    //% group="Motor Control"
+    /**
+     * Forward or Backward with degrees.
+     */
+    //% block="Direction %Forward_Direction|Time %time|ABS Degree %degrees|Min Speed\n %min_speed"
+    //% degrees.min=-180 degrees.max=180
+    //% min_speed.min=0 min_speed.max=100
+    //% time.shadow="timePicker"
+    //% time.defl=500
+    //% min_speed.defl=30
+    export function goWithDegreesTimeABS(
         direction: Forward_Direction,
         time: number,
         degrees: number,
@@ -1371,6 +1403,7 @@ namespace PTKidsBITRobot {
         }
         else if (setAngles == Angle.Yaw) {
             angle_offset[2] = imu_yaw
+            current_degree = 0
         }
     }
 
